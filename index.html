@@ -794,25 +794,45 @@ countrySelect.addEventListener('change', updateCarbon);
 
 recalc();
 
-// ---- Auto-detect country via IP ----
+// ---- Auto-detect country ----
+// 1) Try navigator.language (e.g. "de-DE" → "DE"). No network, never blocked.
+// 2) Fall back to Cloudflare's trace endpoint (CORS-enabled, less commonly blocked
+//    than dedicated geo-IP APIs because it's part of the regular CDN domain).
+function setCountry(code, label) {
+  if (!code || !carbonData[code]) return false;
+  countrySelect.value = code;
+  countryStatus.className = 'measure-status success';
+  countryStatus.textContent = `auto-detected: ${label || carbonData[code].zone.zoneName}`;
+  updateCarbon();
+  return true;
+}
+
+function detectFromLocale() {
+  const langs = [navigator.language, ...(navigator.languages || [])].filter(Boolean);
+  for (const lang of langs) {
+    const m = lang.match(/[-_]([A-Z]{2})\b/i);
+    if (m && setCountry(m[1].toUpperCase())) return true;
+  }
+  return false;
+}
+
+async function detectFromNetwork() {
+  try {
+    const resp = await fetch('https://www.cloudflare.com/cdn-cgi/trace', { cache: 'no-store' });
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    const text = await resp.text();
+    const m = text.match(/^loc=([A-Z]{2})/m);
+    if (m && setCountry(m[1])) return true;
+  } catch (_) { /* blocked or offline — fall through */ }
+  return false;
+}
+
 (async () => {
   countryStatus.textContent = 'detecting…';
-  try {
-    const resp = await fetch('https://api.country.is/');
-    if (!resp.ok) throw new Error('HTTP ' + resp.status);
-    const { country } = await resp.json();
-    if (country && carbonData[country]) {
-      countrySelect.value = country;
-      countryStatus.className = 'measure-status success';
-      countryStatus.textContent = `auto-detected: ${carbonData[country].zone.zoneName}`;
-      updateCarbon();
-    } else {
-      countryStatus.textContent = '';
-    }
-  } catch (err) {
-    countryStatus.className = 'measure-status error';
-    countryStatus.textContent = 'auto-detect failed — please select';
-  }
+  if (detectFromLocale()) return;
+  if (await detectFromNetwork()) return;
+  countryStatus.className = 'measure-status';
+  countryStatus.textContent = '';
 })();
 </script>
 </body>
